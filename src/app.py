@@ -4,6 +4,7 @@ sys.path.append("./dependencies")
 import json
 import jsonschema
 import os
+import redis
 
 from jsonschema import validate
 
@@ -27,8 +28,12 @@ class Main(object):
             self.schedule.start()
 
             print("Starting Queue Listener...")
-            schedule_queue = Queue(self.scheduler_queue_name, self.process_message)
-            schedule_queue.start()
+            self.schedule_queue = Queue(
+                self.scheduler_queue_name,
+                self.process_message
+            )
+
+            self.schedule_queue.start()
 
     def get_validation_schema(self):
         with open('%s/schemas/default.json' % os.path.dirname(__file__), 'r') as f:
@@ -36,7 +41,7 @@ class Main(object):
 
         return json.loads(schema_data)
 
-    def process_message(self, channel, method, properties, body):
+    def process_message(self, channel, method_frame, properties, body):
         print(" [x] Received %r" % body)
 
         message_is_valid, validation_message = self.message_valid(body)
@@ -44,16 +49,26 @@ class Main(object):
         if message_is_valid:
             payload = json.loads(body)
 
-            if payload["action"] == "add":
-                return_payload = self.schedule.add(send_job, payload["server"], payload["scheduledDateTime"])
-            elif payload["action"] == "delete":
-                return_payload = self.schedule.delete(payload["id"])
-            elif payload["action"] == "list":
-                return_payload = self.schedule.list()
-            else:
-                return_payload = { "status": "failed", "message": "Unknown action: " + payload["action"] }
+            try:
+                if payload["action"] == "add":
+                    return_payload = self.schedule.add(send_job, payload["server"], payload["scheduledDateTime"])
+                elif payload["action"] == "delete":
+                    return_payload = self.schedule.delete(payload["id"])
+                elif payload["action"] == "list":
+                    return_payload = self.schedule.list()
+                else:
+                    return_payload = { "status": "failed", "message": "Unknown action: " + payload["action"] }
+            except redis.exceptions.ConnectionError as err:
+                return_payload = { "status": "retry", "message": err.args[0] }
         else:
             return_payload = { "status": "failed", "message": validation_message}
+
+        if "status" in return_payload and return_payload["status"] == "failed":
+            self.schedule_queue.reject(False, method_frame.delivery_tag)
+        elif "status" in return_payload and return_payload["status"] == "retry":
+            self.schedule_queue.reject(False, method_frame.delivery_tag)
+        else:
+            self.schedule_queue.accept(method_frame.delivery_tag)
         
         print(json.dumps(return_payload, sort_keys=True, indent=4, separators=(',', ': '), default=str))
 

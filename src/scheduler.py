@@ -42,9 +42,9 @@ class Scheduler(object):
         self.scheduler.start()
 
     def add(self, callback, server, datetime):
-        existing_jobs = self.get_jobs()
+        existing_jobs = self.get_jobs_by_server(server)
 
-        if server in existing_jobs:
+        if len(existing_jobs) > 0:
             message = "Job '%s' for '%s' already scheduled for '%s'." % (existing_jobs[server]["id"], server, existing_jobs[server]["scheduledDateTime"])
             print(message)
             return { "status": "failed", "statusMessage": message }
@@ -75,9 +75,32 @@ class Scheduler(object):
         jobdict = {}
 
         for job in self.scheduler.get_jobs():
-            jobdict[job.args[0]] = {
-                "id": job.id,
+            jobdict[job.id] = {
+                "server": job.args[0],
                 "scheduledDateTime": job.next_run_time
             }
+
+        return jobdict
+
+    def get_job(self, id):
+        jobdict = {}
+
+        for job in [self.scheduler.get_job(id)]:
+            jobdict[job.id] = {
+                "server": job.args[0],
+                "scheduledDateTime": job.next_run_time
+            }
+
+        return jobdict
+
+    def get_jobs_by_server(self, server):
+        jobdict = {}
+
+        for job in self.scheduler.get_jobs():
+            if job.args[0] == server:
+                jobdict[job.id] = {
+                    "server": job.args[0],
+                    "scheduledDateTime": job.next_run_time
+                }
 
         return jobdict
